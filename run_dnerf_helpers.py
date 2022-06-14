@@ -66,7 +66,7 @@ def get_embedder(multires, input_dims, i=0):
 
 # Model
 class DirectTemporalNeRF(nn.Module):
-    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, input_ch_time=1, output_ch=4, skips=[4],
+    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, input_ch_time=2, output_ch=4, skips=[4],
                  use_viewdirs=False, memory=[], embed_fn=None, zero_canonical=True):
         super(DirectTemporalNeRF, self).__init__()
         self.D = D
@@ -112,11 +112,12 @@ class DirectTemporalNeRF(nn.Module):
 
     def forward(self, x, ts):
         input_pts, input_views = torch.split(x, [self.input_ch, self.input_ch_views], dim=-1)
-        t = ts[0]
+        t = ts[0] # 重复两次后在这里只用一个？真服了，为什么重复两次呢？
 
         assert len(torch.unique(t[:, :1])) == 1, "Only accepts all points from same time"
-        cur_time = t[0, 0]
-        if cur_time == 0. and self.zero_canonical:
+        assert len(torch.unique(t[:, 1:2])) == 1, "Only accepts all points from same time"
+        cur_gaze = t[0, :]
+        if cur_gaze[0] == 0. and cur_gaze[1] == 0. and self.zero_canonical:
             dx = torch.zeros_like(input_pts[:, :3])
         else:
             dx = self.query_time(input_pts, t, self._time, self._time_out)

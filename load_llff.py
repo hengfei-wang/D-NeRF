@@ -352,7 +352,7 @@ def load_llff_data(basedir, factor=1, recenter=True, bd_factor=.75, spherify=Fal
             c2w_path, up, rads, focal, zdelta, zrate=.5, rots=N_rots, N=N_views)
 
     render_poses = np.array(render_poses).astype(np.float32)
-    render_gaze = gazes[gaze_num]
+    render_gaze = np.array([0.5, 0.5])
 
     c2w = poses_avg(poses)
     print('Data:')

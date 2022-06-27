@@ -32,6 +32,4 @@ i_testset = 10000
 i_video = 20000
 
 interpolate = True
-render_gaze = 12
-render_pose = 0
-multi_gazes = True
+render_gaze = 99

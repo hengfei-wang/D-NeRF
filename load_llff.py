@@ -70,11 +70,13 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True):
         data = pkl.load(f)
     poses_arr = data["pb"]
     imgs_list = data["imgs"]
+    masks_list = data["masks"]
     # poses_arr = np.load(os.path.join(basedir, 'poses_bounds.npy'))
     # 此处仅仅将图片数量维度转为第三维度
-    poses = poses_arr[:, :-4].reshape([-1, 3, 5]).transpose([1, 2, 0])
-    bds = poses_arr[:, -4:-2].transpose([1, 0])
-    gazes = poses_arr[:, -2:].transpose([1, 0])  # 2x140
+    poses = poses_arr[:, :-5].reshape([-1, 3, 5]).transpose([1, 2, 0])
+    bds = poses_arr[:, -5:-3].transpose([1, 0])
+    gazes = poses_arr[:, -3:-1].transpose([1, 0])
+    faces = poses_arr[:, -1:].transpose([1, 0])
 
     # img0 = [os.path.join(basedir, 'images', f) for f in sorted(os.listdir(os.path.join(basedir, 'images'))) \
     #         if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')][0]
@@ -133,7 +135,7 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True):
     print('Loaded image data', imgs.shape, poses[:, -1, 0])
     end = time.time()
     print('loading time: ', end-start)
-    return poses, bds, imgs, gazes
+    return poses, bds, imgs, gazes, faces
 
 
 def normalize(x):
@@ -289,7 +291,7 @@ def spherify_poses(poses, bds):
 def load_llff_data(basedir, factor=1, recenter=True, bd_factor=.75, spherify=False, path_zflat=False, interpolate=True, gaze_num=0):
 
     # factor=8 downsamples original imgs by 8x
-    poses, bds, imgs, gazes = _load_data(basedir, factor=factor)
+    poses, bds, imgs, gazes, faces = _load_data(basedir, factor=factor)
     print('Loaded', basedir, bds.min(), bds.max())
 
     # Correct rotation matrix ordering and move variable dim to axis 0
@@ -300,6 +302,7 @@ def load_llff_data(basedir, factor=1, recenter=True, bd_factor=.75, spherify=Fal
     images = imgs
     bds = np.moveaxis(bds, -1, 0).astype(np.float32)
     gazes = np.moveaxis(gazes, -1, 0).astype(np.float32)
+    faces = np.moveaxis(faces, -1, 0).astype(np.float32)
 
     # Rescale if bd_factor is provided
     sc = 1. if bd_factor is None else 1./(bds.min() * bd_factor)
@@ -352,8 +355,10 @@ def load_llff_data(basedir, factor=1, recenter=True, bd_factor=.75, spherify=Fal
             c2w_path, up, rads, focal, zdelta, zrate=.5, rots=N_rots, N=N_views)
 
     render_poses = np.array(render_poses).astype(np.float32)
-    render_gaze = np.array([0.5, 0.5])
-
+    if gaze_num > gazes.shape[0]:
+        render_gaze = np.array([0.5, 0.5])
+    else:
+        render_gaze = gazes[gaze_num]
     c2w = poses_avg(poses)
     print('Data:')
     print(poses.shape, images.shape, bds.shape, gazes.shape)
@@ -365,5 +370,6 @@ def load_llff_data(basedir, factor=1, recenter=True, bd_factor=.75, spherify=Fal
     images = images.astype(np.float32)
     poses = poses.astype(np.float32)
     gazes = gazes.astype(np.float32)
+    faces = faces.astype(np.float32)
 
-    return images, poses, bds, render_poses, i_test, gazes, render_gaze
+    return images, poses, bds, render_poses, i_test, gazes, faces, render_gaze

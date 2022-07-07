@@ -608,6 +608,8 @@ def config_parser():
                         help='render imgs of specific pose with different gazes')
     parser.add_argument("--multi_gazes", action="store_true",
                         help='render imgs of specific pose with different gazes')
+    parser.add_argument("--render_gazeDirection", type=str, default="verticle",
+                        help='render gaze direction')
 
     # training options
     parser.add_argument("--precrop_iters", type=int, default=0,
@@ -691,9 +693,9 @@ def train():
         # images = [rgb2hsv(img) for img in images]
 
     elif args.dataset_type == 'llff':
-        images, poses, bds, render_poses, i_test, gazes, render_gaze = load_llff_data(args.datadir, args.factor,
-                                                                                      recenter=True, bd_factor=.75,
-                                                                                      spherify=args.spherify, interpolate=args.interpolate, gaze_num=args.render_gaze)
+        images, poses, bds, render_poses, i_test, gazes, faces, render_gaze = load_llff_data(args.datadir, args.factor,
+                                                                                             recenter=True, bd_factor=.75,
+                                                                                             spherify=args.spherify, interpolate=args.interpolate, gaze_num=args.render_gaze)
         hwf = poses[0, :3, -1]
         poses = poses[:, :3, :4]
         print('Loaded llff', images.shape,
@@ -767,9 +769,16 @@ def train():
         render_poses = np.tile(poses[args.render_pose], (30, 1, 1))
         print(render_poses.shape)
         render_gazes = np.zeros((30, 2))
-        render_gazes[:, 0] = np.tile(
-            np.array([500/1000]), (render_gazes.shape[0]))
-        render_gazes[:, 1] = np.linspace(0, 1, render_gazes.shape[0])
+        if args.render_gazeDirection == "verticle":
+            render_gazes[:, 0] = np.tile(
+                np.array([500/1000]), (render_gazes.shape[0]))
+            render_gazes[:, 1] = np.linspace(0, 1, render_gazes.shape[0])
+        elif args.render_gazeDirection == "horizontal":
+            render_gazes[:, 1] = np.tile(
+                np.array([500/1000]), (render_gazes.shape[0]))
+            render_gazes[:, 0] = np.linspace(0, 1, render_gazes.shape[0])
+        else:
+            raise NotImplementedError
     else:
         render_gazes = np.tile(render_gaze, (render_poses.shape[0], 1))
 
@@ -791,7 +800,7 @@ def train():
 
             if args.multi_gazes:
                 testsavedir = os.path.join(basedir, expname, 'renderonly_{}_pose{}_{:06d}'.format(
-                    'interpolate_gaze' if args.multi_gazes else 'path', "verticle", start))
+                    'interpolate_gaze' if args.multi_gazes else 'path', args.render_gazeDirection, start))
             else:
                 testsavedir = os.path.join(basedir, expname, 'renderonly_{}_gaze{:03d}_{:06d}'.format(
                     'test' if args.render_test else 'path', args.render_gaze, start))
@@ -1056,6 +1065,7 @@ def train():
                     'acc_rough', extras['z_std'].cpu().numpy(), i, dataformats='HW')
 
             print("finish summary")
+            # to flush the buffer and output the info stored in the buffer. Usually use in small stream.
             writer.flush()
 
         if i % args.i_video == 0:

@@ -1,4 +1,4 @@
-expname = xgaze_sub0000
+expname = xgaze_multi_view_50
 basedir = ./logs
 datadir = ./data/subject0000
 dataset_type = llff
@@ -28,8 +28,10 @@ do_half_precision = False
 i_print = 100
 i_img = 1000
 i_weights = 10000
-i_testset = 10000
-i_video = 20000
+i_testset = 50000
+i_video = 100000
 
+render_only = False
 interpolate = True
-render_gaze = 99
+multi_gazes = True
+render_gazeDirection = horizontal

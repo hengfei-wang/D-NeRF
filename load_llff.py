@@ -109,9 +109,10 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True):
 
     # imgfiles = [os.path.join(imgdir, f) for f in sorted(os.listdir(imgdir)) if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')]
     imgfiles = imgs_list
-    if poses.shape[-1] != len(imgfiles):
-        print('Mismatch between imgs {} and poses {} !!!!'.format(
-            len(imgfiles), poses.shape[-1]))
+    maskfiles = masks_list
+    if poses.shape[-1] != len(imgfiles) or poses.shape[-1] != len(maskfiles):
+        print('Mismatch between imgs {} masks {} and poses {} !!!!'.format(
+            len(imgfiles), len(maskfiles), poses.shape[-1]))
         return
 
     sh = imageio.imread(imgfiles[0]).shape
@@ -131,11 +132,14 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True):
 
     imgs = imgs = [imread(f)[..., :3]/255. for f in imgfiles]
     imgs = np.stack(imgs, -1)
+    masks = [imread(f)/255. for f in maskfiles]
+    masks = np.stack(imgs, -1)
 
     print('Loaded image data', imgs.shape, poses[:, -1, 0])
+    print('Loaded mask data', masks.shape, poses[:, -1, 0])
     end = time.time()
     print('loading time: ', end-start)
-    return poses, bds, imgs, gazes, faces
+    return poses, bds, imgs, gazes, faces, masks
 
 
 def normalize(x):
@@ -291,7 +295,7 @@ def spherify_poses(poses, bds):
 def load_llff_data(basedir, factor=1, recenter=True, bd_factor=.75, spherify=False, path_zflat=False, interpolate=True, gaze_num=0):
 
     # factor=8 downsamples original imgs by 8x
-    poses, bds, imgs, gazes, faces = _load_data(basedir, factor=factor)
+    poses, bds, imgs, gazes, faces, masks = _load_data(basedir, factor=factor)
     print('Loaded', basedir, bds.min(), bds.max())
 
     # Correct rotation matrix ordering and move variable dim to axis 0
@@ -299,6 +303,7 @@ def load_llff_data(basedir, factor=1, recenter=True, bd_factor=.75, spherify=Fal
         [poses[:, 1:2, :], -poses[:, 0:1, :], poses[:, 2:, :]], 1)
     poses = np.moveaxis(poses, -1, 0).astype(np.float32)
     imgs = np.moveaxis(imgs, -1, 0).astype(np.float32)
+    masks = np.moveaxis(masks, -1, 0).astype(np.float32)
     images = imgs
     bds = np.moveaxis(bds, -1, 0).astype(np.float32)
     gazes = np.moveaxis(gazes, -1, 0).astype(np.float32)
@@ -361,15 +366,16 @@ def load_llff_data(basedir, factor=1, recenter=True, bd_factor=.75, spherify=Fal
         render_gaze = gazes[gaze_num]
     c2w = poses_avg(poses)
     print('Data:')
-    print(poses.shape, images.shape, bds.shape, gazes.shape)
+    print(poses.shape, images.shape, masks.shape, bds.shape, gazes.shape)
 
     dists = np.sum(np.square(c2w[:3, 3] - poses[:, :3, 3]), -1)
     i_test = np.argmin(dists)
     print('HOLDOUT view is', i_test)
 
     images = images.astype(np.float32)
+    masks = masks.astype(np.float32)
     poses = poses.astype(np.float32)
     gazes = gazes.astype(np.float32)
     faces = faces.astype(np.float32)
 
-    return images, poses, bds, render_poses, i_test, gazes, faces, render_gaze
+    return images, masks, poses, bds, render_poses, i_test, gazes, faces, render_gaze

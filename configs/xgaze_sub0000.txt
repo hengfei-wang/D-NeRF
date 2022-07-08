@@ -35,3 +35,5 @@ render_only = False
 interpolate = True
 multi_gazes = True
 render_gazeDirection = horizontal
+
+use_eyeMask = True

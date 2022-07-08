@@ -142,6 +142,8 @@ class NeRF:
             model = NeRFOriginal(*args, **kwargs)
         elif type == "direct_temporal":
             model = DirectTemporalNeRF(*args, **kwargs)
+        elif type == "gaze_masked":
+            model = GazeNeRF(*args, **kwargs)
         else:
             raise ValueError("Type %s not recognized." % type)
         return model
@@ -259,13 +261,16 @@ class NeRFOriginal(nn.Module):
 
 
 class GazeNeRF(nn.Module):
-    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, input_ch_time=1, output_ch=4, skips=[4],
+    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, input_ch_code=3, output_ch=4, skips=[4],
                  use_viewdirs=False, memory=[], embed_fn=None, output_color_ch=3, zero_canonical=True):
         super(NeRFOriginal, self).__init__()
         self.D = D
         self.W = W
         self.input_ch = input_ch
         self.input_ch_views = input_ch_views
+        self.input_ch_code = input_ch_code
+        # self.input_ch_gaze = input_ch_gaze
+        # self.input_ch_face = input_ch_face
         self.skips = skips
         self.use_viewdirs = use_viewdirs
 

@@ -40,19 +40,21 @@ def batchify(fn, chunk):
     return ret
 
 
-def run_network(inputs, viewdirs, gaze_yaw, gaze_pitch, fn, embed_fn, embeddirs_fn, embedgaze_fn, netchunk=1024*64,
+def run_network(inputs, viewdirs, gaze_yaw, gaze_pitch, face_code, fn, embed_fn, embeddirs_fn, embedcode_fn, netchunk=1024*64,
                 embd_time_discr=True):
     """Prepares inputs and applies network 'fn'.
     inputs: N_rays x N_points_per_ray x 3
     viewdirs: N_rays x 3
     gaze_yaw: N_rays x 1
     gaze_pitch: N_rays x 1
+    face_code: N_rays x 1
+    ray should only belong to one face_code or one gaze_code, the other code should be 0.
     """
-    gaze = torch.concat((gaze_yaw, gaze_pitch), dim=1)
-    assert len(torch.unique(gaze_yaw)
-               ) == 1, "Only accepts all points from same gaze"
-    assert len(torch.unique(gaze_pitch)
-               ) == 1, "Only accepts all points from same gaze"
+    code = torch.concat((face_code, gaze_yaw, gaze_pitch), dim=1)
+    # assert len(torch.unique(gaze_yaw)
+    #            ) == 1, "Only accepts all points from same gaze"
+    # assert len(torch.unique(gaze_pitch)
+    #            ) == 1, "Only accepts all points from same gaze"
     # cur_time = torch.unique(frame_time)[0]
 
     # embed position
@@ -67,13 +69,13 @@ def run_network(inputs, viewdirs, gaze_yaw, gaze_pitch, fn, embed_fn, embeddirs_
     #     embedded_time = embedtime_fn(input_frame_time_flat)
     #     embedded_times = [embedded_time, embedded_time]
 
-    # embed gaze
+    # embed deform code
     if embd_time_discr:
         B, N, _ = inputs.shape
-        input_frame_gaze = gaze[:, None].expand([B, N, 2])
-        input_frame_gaze_flat = torch.reshape(input_frame_gaze, [-1, 2])
-        embedded_gaze = embedgaze_fn(input_frame_gaze_flat)
-        embedded_gazes = [embedded_gaze, embedded_gaze]
+        input_frame_code = code[:, None].expand([B, N, 3])
+        input_frame_code_flat = torch.reshape(input_frame_code, [-1, 3])
+        embedded_code = embedcode_fn(input_frame_code_flat)
+        embedded_codes = [embedded_code, embedded_code]
 
     else:
         assert NotImplementedError
@@ -86,7 +88,7 @@ def run_network(inputs, viewdirs, gaze_yaw, gaze_pitch, fn, embed_fn, embeddirs_
         embedded = torch.cat([embedded, embedded_dirs], -1)
 
     outputs_flat, position_delta_flat = batchify(
-        fn, netchunk)(embedded, embedded_gazes)
+        fn, netchunk)(embedded, embedded_codes)
     outputs = torch.reshape(outputs_flat, list(
         inputs.shape[:-1]) + [outputs_flat.shape[-1]])
     position_delta = torch.reshape(position_delta_flat, list(
@@ -110,7 +112,7 @@ def batchify_rays(rays_flat, chunk=1024*32, **kwargs):
 
 
 def render(H, W, focal, chunk=1024*32, rays=None, c2w=None, ndc=True,
-           near=0., far=1., gaze=None,
+           near=0., far=1., code=None,
            use_viewdirs=False, c2w_staticcam=None,
            **kwargs):
     """Render rays
@@ -127,6 +129,7 @@ def render(H, W, focal, chunk=1024*32, rays=None, c2w=None, ndc=True,
       near: float or array of shape [batch_size]. Nearest distance for a ray.
       far: float or array of shape [batch_size]. Farthest distance for a ray.
       gaze: float or array of shape [2]. gaze position code for a ray
+      code: float or array of shape [3]. face + gaze position code for a ray
       use_viewdirs: bool. If True, use viewing direction of a point in space in model.
       c2w_staticcam: array of shape [3, 4]. If not None, use this transformation matrix for 
        camera while using other c2w argument for viewing directions.
@@ -165,9 +168,9 @@ def render(H, W, focal, chunk=1024*32, rays=None, c2w=None, ndc=True,
         torch.ones_like(rays_d[..., :1]), far * \
         torch.ones_like(rays_d[..., :1])
     # frame_time = frame_time * torch.ones_like(rays_d[...,:1])
-    gaze_yaw = gaze[0] * torch.ones_like(rays_d[..., :1])
-    gaze_pitch = gaze[1] * torch.ones_like(rays_d[..., :1])
-    rays = torch.cat([rays_o, rays_d, near, far, gaze_yaw, gaze_pitch], -1)
+    # gaze_yaw = gaze[0] * torch.ones_like(rays_d[..., :1])
+    # gaze_pitch = gaze[1] * torch.ones_like(rays_d[..., :1])
+    rays = torch.cat([rays_o, rays_d, near, far, code], -1)
     if use_viewdirs:
         rays = torch.cat([rays, viewdirs], -1)
 
@@ -232,8 +235,10 @@ def create_nerf(args):
     """Instantiate NeRF's MLP model.
     """
     embed_fn, input_ch = get_embedder(args.multires, 3, args.i_embed)
-    embedgaze_fn, input_ch_gaze = get_embedder(args.multires, 2, args.i_embed)
-    embedtime_fn, input_ch_time = get_embedder(args.multires, 1, args.i_embed)
+    embedcode_fn, input_ch_code = get_embedder(args.multires, 3, args.i_embed)
+    # embedgaze_fn, input_ch_gaze = get_embedder(args.multires, 2, args.i_embed)
+    # embedface_fn, input_ch_face = get_embedder(args.multires, 1, args.i_embed)
+    # embedtime_fn, input_ch_time = get_embedder(args.multires, 1, args.i_embed)
 
     input_ch_views = 0
     embeddirs_fn = None
@@ -245,7 +250,7 @@ def create_nerf(args):
     skips = [4]
     model = NeRF.get_by_name(args.nerf_type, D=args.netdepth, W=args.netwidth,
                              input_ch=input_ch, output_ch=output_ch, skips=skips,
-                             input_ch_views=input_ch_views, input_ch_time=input_ch_gaze,
+                             input_ch_views=input_ch_views, input_ch_code=input_ch_code,
                              use_viewdirs=args.use_viewdirs, embed_fn=embed_fn,
                              zero_canonical=not args.not_zero_canonical).to(device)
     grad_vars = list(model.parameters())
@@ -254,17 +259,19 @@ def create_nerf(args):
     if args.use_two_models_for_fine:
         model_fine = NeRF.get_by_name(args.nerf_type, D=args.netdepth_fine, W=args.netwidth_fine,
                                       input_ch=input_ch, output_ch=output_ch, skips=skips,
-                                      input_ch_views=input_ch_views, input_ch_time=input_ch_time,
+                                      input_ch_views=input_ch_views, input_ch_code=input_ch_code,
                                       use_viewdirs=args.use_viewdirs, embed_fn=embed_fn,
                                       zero_canonical=not args.not_zero_canonical).to(device)
         grad_vars += list(model_fine.parameters())
 
-    def network_query_fn(inputs, viewdirs, gaze_yaw, gaze_pitch, network_fn): return run_network(inputs, viewdirs, gaze_yaw, gaze_pitch, network_fn,
-                                                                                                 embed_fn=embed_fn,
-                                                                                                 embeddirs_fn=embeddirs_fn,
-                                                                                                 embedgaze_fn=embedgaze_fn,
-                                                                                                 netchunk=args.netchunk,
-                                                                                                 embd_time_discr=args.nerf_type != "temporal")
+    def network_query_fn(inputs, viewdirs, gaze_yaw, gaze_pitch, face_code, network_fn): return run_network(inputs, viewdirs, gaze_yaw, gaze_pitch, face_code, network_fn,
+                                                                                                            embed_fn=embed_fn,
+                                                                                                            embeddirs_fn=embeddirs_fn,
+                                                                                                            # embedgaze_fn=embedgaze_fn,
+                                                                                                            # embedface_fn=embedface_fn,
+                                                                                                            embedcode_fn=embedcode_fn,
+                                                                                                            netchunk=args.netchunk,
+                                                                                                            embd_time_discr=args.nerf_type != "temporal")
 
     # Create optimizer
     optimizer = torch.optim.Adam(
@@ -436,10 +443,9 @@ def render_rays(ray_batch,
 
     N_rays = ray_batch.shape[0]
     rays_o, rays_d = ray_batch[:, 0:3], ray_batch[:, 3:6]  # [N_rays, 3] each
-    viewdirs = ray_batch[:, -3:] if ray_batch.shape[-1] > 10 else None
-    bounds = torch.reshape(ray_batch[..., 6:10], [-1, 1, 4])
-    near, far, gaze_yaw, gaze_pitch = bounds[..., 0], bounds[...,
-                                                             1], bounds[..., 2], bounds[..., 3]  # [-1,1]
+    viewdirs = ray_batch[:, -3:] if ray_batch.shape[-1] > 11 else None
+    bounds = torch.reshape(ray_batch[..., 6:11], [-1, 1, 5])
+    near, far, code = bounds[..., 0], bounds[..., 1], bounds[..., 2:]  # [-1,1]
     z_samples = None
     rgb_map_0, disp_map_0, acc_map_0, position_delta_0 = None, None, None, None
 
@@ -473,21 +479,21 @@ def render_rays(ray_batch,
 
         if N_importance <= 0:
             raw, position_delta = network_query_fn(
-                pts, viewdirs, gaze_yaw, gaze_pitch, network_fn)
+                pts, viewdirs, code, network_fn)
             rgb_map, disp_map, acc_map, weights, depth_map = raw2outputs(
                 raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
 
         else:
             if use_two_models_for_fine:
                 raw, position_delta_0 = network_query_fn(
-                    pts, viewdirs, gaze_yaw, gaze_pitch, network_fn)
+                    pts, viewdirs, code, network_fn)
                 rgb_map_0, disp_map_0, acc_map_0, weights, _ = raw2outputs(
                     raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
 
             else:
                 with torch.no_grad():
                     raw, _ = network_query_fn(
-                        pts, viewdirs, gaze_yaw, gaze_pitch, network_fn)
+                        pts, viewdirs, code, network_fn)
                     _, _, _, weights, _ = raw2outputs(
                         raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
 
@@ -501,7 +507,7 @@ def render_rays(ray_batch,
         z_vals[..., :, None]  # [N_rays, N_samples + N_importance, 3]
     run_fn = network_fn if network_fine is None else network_fine
     raw, position_delta = network_query_fn(
-        pts, viewdirs, gaze_yaw, gaze_pitch, run_fn)
+        pts, viewdirs, code, run_fn)
     rgb_map, disp_map, acc_map, weights, _ = raw2outputs(
         raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
 
@@ -602,6 +608,8 @@ def config_parser():
                         help='render the test set instead of render_poses path')
     parser.add_argument("--render_factor", type=int, default=0,
                         help='downsampling factor to speed up rendering, set 4 or 8 for fast preview')
+
+    # gaze rendering options
     parser.add_argument("--render_gaze", type=int, default=0,
                         help='render imgs of specific gaze with different poses')
     parser.add_argument("--render_pose", type=int, default=0,
@@ -622,6 +630,8 @@ def config_parser():
                         help='evaluate tv loss')
     parser.add_argument("--tv_loss_weight", type=float,
                         default=1.e-4, help='weight of tv loss')
+    parser.add_argument("--use_eyeMask", action="store_true",
+                        help='train eye and facial regions splitly')
 
     # dataset options
     parser.add_argument("--dataset_type", type=str, default='llff',
@@ -693,9 +703,9 @@ def train():
         # images = [rgb2hsv(img) for img in images]
 
     elif args.dataset_type == 'llff':
-        images, poses, bds, render_poses, i_test, gazes, faces, render_gaze = load_llff_data(args.datadir, args.factor,
-                                                                                             recenter=True, bd_factor=.75,
-                                                                                             spherify=args.spherify, interpolate=args.interpolate, gaze_num=args.render_gaze)
+        images, masks, poses, bds, render_poses, i_test, gazes, faces, render_gaze = load_llff_data(args.datadir, args.factor,
+                                                                                                    recenter=True, bd_factor=.75,
+                                                                                                    spherify=args.spherify, interpolate=args.interpolate, gaze_num=args.render_gaze)
         hwf = poses[0, :3, -1]
         poses = poses[:, :3, :4]
         print('Loaded llff', images.shape,
@@ -843,8 +853,10 @@ def train():
 
     # Move training data to GPU
     images = torch.Tensor(images).to(device)
+    # masks = torch.Tensor(masks).to(device)
     poses = torch.Tensor(poses).to(device)
-    gazes = torch.Tensor(gazes).to(device)
+    # gazes = torch.Tensor(gazes).to(device)
+    # faces = torch.Tensor(faces).to(device)
     if use_batching:
         rays_rgb = torch.Tensor(rays_rgb).to(device)
 
@@ -874,6 +886,70 @@ def train():
                 rays_rgb = rays_rgb[rand_idx]
                 i_batch = 0
 
+        elif args.use_eyeMask:
+            # Random from one image
+            if i >= args.precrop_iters_time:
+                img_i = np.random.choice(i_train)
+            else:
+                skip_factor = i / float(args.precrop_iters_time) * len(i_train)
+                max_sample = max(int(skip_factor), 3)
+                img_i = np.random.choice(i_train[:max_sample])
+
+            target = images[img_i]
+            mask = masks[img_i]
+            pose = poses[img_i, :3, :4]
+            # frame_time = times[img_i]
+            gaze = gazes[img_i]
+            face = faces[img_i]
+
+            if N_rand is not None:
+                rays_o, rays_d = get_rays(
+                    H, W, focal, torch.Tensor(pose))  # (H, W, 3), (H, W, 3)
+
+                if i < args.precrop_iters:
+                    dH = int(H//2 * args.precrop_frac)
+                    dW = int(W//2 * args.precrop_frac)
+                    coords = torch.stack(
+                        torch.meshgrid(
+                            torch.linspace(H//2 - dH, H//2 + dH - 1, 2*dH),
+                            torch.linspace(W//2 - dW, W//2 + dW - 1, 2*dW)
+                        ), -1)
+                    if i == start:
+                        print(
+                            f"[Config] Center cropping of size {2*dH} x {2*dW} is enabled until iter {args.precrop_iters}")
+                else:
+                    coords = torch.stack(torch.meshgrid(torch.linspace(
+                        0, H-1, H), torch.linspace(0, W-1, W)), -1)  # (H, W, 2)
+
+                select_x = np.random.choice(
+                    H, size=[N_rand], replace=False).reshape(-1, 1)
+                select_y = np.random.choice(
+                    W, size=[N_rand], replace=False).reshape(-1, 1)
+                select_coords = np.stack(
+                    (select_x, select_y), -1)  # N_rand x 2
+                code_list = []
+                for ind in range(N_rand):
+                    x_y = select_coords[ind]
+                    code = np.zeros((1, 3))
+                    if mask[x_y[0], x_y[1]] > 0.5:
+                        code[0, 1:] = gaze
+                    else:
+                        code[0, 0] = face
+                    code_list.append()
+                code = np.stack(code_list)  # N_rand x 3
+                code = torch.Tensor(code).to(device)
+
+                # coords = torch.reshape(coords, [-1, 2])  # (H * W, 2)
+                # select_inds = np.random.choice(
+                #     coords.shape[0], size=[N_rand], replace=False)  # (N_rand,)
+                # select_coords = coords[select_inds].long()  # (N_rand, 2)
+                rays_o = rays_o[select_coords[:, 0],
+                                select_coords[:, 1]]  # (N_rand, 3)
+                rays_d = rays_d[select_coords[:, 0],
+                                select_coords[:, 1]]  # (N_rand, 3)
+                batch_rays = torch.stack([rays_o, rays_d], 0)
+                target_s = target[select_coords[:, 0],
+                                  select_coords[:, 1]]  # (N_rand, 3)
         else:
             # Random from one image
             if i >= args.precrop_iters_time:
@@ -920,7 +996,7 @@ def train():
                                   select_coords[:, 1]]  # (N_rand, 3)
 
         #####  Core optimization loop  #####
-        rgb, disp, acc, extras = render(H, W, focal, chunk=args.chunk, rays=batch_rays, gaze=gaze,
+        rgb, disp, acc, extras = render(H, W, focal, chunk=args.chunk, rays=batch_rays, code=code,
                                         verbose=i < 10, retraw=True,
                                         **render_kwargs_train)
 
